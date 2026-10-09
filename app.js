@@ -130,6 +130,11 @@
   }
   function cuandoListo(fn) { map.once('idle', fn); map.triggerRepaint(); }
 
+  /* Código de la rejilla del servidor (0-5) → nivel del mapa */
+  function nivelCodigo(c) {
+    const k = { 5: 'alta', 4: 'media', 3: 'baja', 2: 'extendida', 1: tec === '4g' ? 'extendida_alt' : 'extendida' }[c];
+    return NIV[tec].find(n => n.k === k) || SIN;
+  }
   function nivelEn(lngLat) {
     const fs = map.queryRenderedFeatures(map.project(lngLat), { layers: capas[tec].filter(id => map.getLayer(id)) });
     let mejor = null;
@@ -169,7 +174,7 @@
     puntosRuta = []; let acc = 0;
     for (let i = 1; i < co.length; i++) {
       const dd = dist(co[i - 1], co[i]);
-      puntosRuta.push({ a: co[i - 1], b: co[i], km: dd, m: [(co[i - 1][0] + co[i][0]) / 2, (co[i - 1][1] + co[i][1]) / 2] });
+      puntosRuta.push({ a: co[i - 1], b: co[i], km: dd, m: [(co[i - 1][0] + co[i][0]) / 2, (co[i - 1][1] + co[i][1]) / 2], i: i - 1 });
       acc += dd;
     }
     if (!map.getSource('ruta')) {
@@ -189,7 +194,8 @@
     const km = {}; NIV[tec].forEach(n => km[n.k] = 0); km.sin = 0;
     let tramos = 0, prev = null;
     const feats = puntosRuta.map(p => {
-      const n = nivelEn(p.m); km[n.k] += p.km;
+      const cods = tec === '4g' ? ruta.c4 : ruta.c3;
+      const n = cods ? nivelCodigo(Math.max(cods[p.i] || 0, cods[p.i + 1] || 0)) : nivelEn(p.m); km[n.k] += p.km;
       if (n === SIN && prev !== SIN) tramos++; prev = n;
       return { type: 'Feature', properties: { c: n.c }, geometry: { type: 'LineString', coordinates: [p.a, p.b] } };
     });
@@ -227,6 +233,13 @@
     const o = q.get('o'), d = q.get('d');
     if (o && d) pedirRuta(o, d);
     else if (!isNaN(lat0)) ponerPunto([lon0, lat0]);
+  });
+  let avisoCapas = false;
+  map.on('error', e => {
+    if (avisoCapas || !e.sourceId || !/^c_/.test(e.sourceId)) return;
+    avisoCapas = true; mostrar();
+    $('info').innerHTML = '⚠️ No se pudieron cargar las capas de cobertura. Cierra y vuelve a abrir el mapa; si sigue, avisa a tu asesor.';
+    console.warn(e.error);
   });
   map.on('click', e => { if (!llave) return; ruta = null; if (map.getSource('ruta')) map.getSource('ruta').setData({ type: 'FeatureCollection', features: [] });
     (window._mr || []).forEach(m => m.remove()); ponerPunto([e.lngLat.lng, e.lngLat.lat]); });
