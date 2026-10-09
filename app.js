@@ -36,6 +36,9 @@
   let tec = q.get('tec') === '3g' ? '3g' : '4g';
   let llave = null, marcador = null, ruta = null, puntosRuta = [];
 
+  /* Ocultar / mostrar los paneles para ver todo el mapa */
+  const ocultar = () => document.body.classList.add('oculto');
+  const mostrar = () => document.body.classList.remove('oculto');
   function velo(html) { $('velo').innerHTML = html; $('velo').style.display = 'flex'; }
   async function api(body) {
     if (!API) throw new Error('sin api');
@@ -141,6 +144,7 @@
 
   /* ---------- Punto ---------- */
   function ponerPunto([x, y]) {
+    mostrar();
     if (marcador) marcador.remove();
     marcador = new maplibregl.Marker({ color: '#E24B4A' }).setLngLat([x, y]).addTo(map);
     cuandoListo(() => {
@@ -154,6 +158,7 @@
   const dist = (a, b) => { const R = 6371, r = Math.PI / 180, dLa = (b[1] - a[1]) * r, dLo = (b[0] - a[0]) * r;
     const x = Math.sin(dLa / 2) ** 2 + Math.cos(a[1] * r) * Math.cos(b[1] * r) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
   async function pedirRuta(o, d) {
+    mostrar();
     $('info').innerHTML = 'Calculando ruta…';
     let res;
     try { res = await api({ a: 'ruta', o, d }); } catch (e) { $('info').textContent = '❌ No se pudo calcular la ruta.'; return; }
@@ -193,9 +198,9 @@
     const f = v => v < 10 ? v.toFixed(1) : v.toFixed(0);
     const orden = [...NIV[tec], SIN];
     const peor = [...orden].reverse().find(n => km[n.k] >= 1 && !['alta', 'media'].includes(n.k)) || orden.find(n => km[n.k] > 0);
-    const h = Math.floor(ruta.seg / 3600), mi = Math.round(ruta.seg % 3600 / 60);
+    const sg = ruta.seg || 0, h = Math.floor(sg / 3600), mi = Math.round(sg % 3600 / 60);
     $('info').innerHTML = `<b>🛣️ ${esc(ruta.desde)} → ${esc(ruta.hasta)}</b><br>` +
-      `<span class="sub">${ruta.km.toFixed(0)} km · ${h ? h + ' h ' : ''}${mi} min · ${NOMBRE[tec]}: <b>${Math.round(100 - pct(km.sin))}% con cobertura</b></span>` +
+      `<span class="sub">${ruta.km.toFixed(0)} km${sg ? ' · ' + (h ? h + ' h ' : '') + mi + ' min' : ''} · ${NOMBRE[tec]}: <b>${Math.round(100 - pct(km.sin))}% con cobertura</b></span>` +
       `<div class="barra">${orden.map(n => `<span style="width:${pct(km[n.k]).toFixed(1)}%;background:${n.c}"></span>`).join('')}</div>` +
       `<span class="sub">${orden.filter(n => km[n.k] >= 0.05).map(n => `<span class="sq" style="background:${n.c}"></span> ${f(km[n.k])} km`).join(' · ')}` +
       `${km.sin >= 0.05 ? ` (${tramos} tramo${tramos > 1 ? 's' : ''} sin señal)` : ''}</span>` +
@@ -225,6 +230,8 @@
   });
   map.on('click', e => { if (!llave) return; ruta = null; if (map.getSource('ruta')) map.getSource('ruta').setData({ type: 'FeatureCollection', features: [] });
     (window._mr || []).forEach(m => m.remove()); ponerPunto([e.lngLat.lng, e.lngLat.lat]); });
+  $('bOcultar').onclick = ocultar;
+  $('verInfo').onclick = mostrar;
   $('bRuta').onclick = () => $('fRuta').classList.toggle('on');
   $('bIr').onclick = () => { const o = $('iO').value.trim(), d = $('iD').value.trim(); if (o && d && llave) { $('fRuta').classList.remove('on'); pedirRuta(o, d); } };
   $('bYo').onclick = () => {
