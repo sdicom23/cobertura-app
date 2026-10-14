@@ -123,7 +123,7 @@
       b.onclick = () => {
         tec = t; document.querySelectorAll('#tecs .btn').forEach(x => x.classList.toggle('on', x === b));
         mostrarTec();
-        if (ruta) cuandoListo(evaluarRuta); else if (marcador) ponerPunto(marcador.getLngLat().toArray());
+        if (ruta) { if (ruta.c4) evaluarRuta(); else cuandoListo(evaluarRuta); } else if (marcador) ponerPunto(marcador.getLngLat().toArray());
       };
       $('tecs').appendChild(b);
     });
@@ -166,7 +166,8 @@
     mostrar();
     $('info').innerHTML = 'Calculando ruta…';
     let res;
-    try { res = await api({ a: 'ruta', o, d }); } catch (e) { $('info').textContent = '❌ No se pudo calcular la ruta.'; return; }
+    try { res = await api({ a: 'ruta', o, d }); } catch (e) { $('info').textContent = '❌ No se pudo calcular la ruta (' + (e && e.message || 'sin conexión') + ').'; return; }
+    if (!res || !res.pts || !res.pts.length) { if (res && res.ok) res = { ok: false, msg: 'La ruta llegó vacía.' }; }
     if (!res.ok) { $('info').textContent = '❌ ' + (res.msg || 'No se pudo calcular la ruta.'); return; }
     if (marcador) { marcador.remove(); marcador = null; }
     ruta = res;
@@ -187,7 +188,7 @@
                   new maplibregl.Marker({ color: '#E24B4A' }).setLngLat(co[co.length - 1]).addTo(map)];
     const lons = co.map(p => p[0]), lats = co.map(p => p[1]);
     map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: { top: 170, bottom: 190, left: 30, right: 30 }, duration: 0 });
-    cuandoListo(evaluarRuta);
+    if (res.c4) evaluarRuta(); else cuandoListo(evaluarRuta);
   }
   function evaluarRuta() {
     if (!ruta) return;
