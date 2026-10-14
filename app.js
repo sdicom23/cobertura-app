@@ -179,7 +179,7 @@
       acc += dd;
     }
     if (!map.getSource('ruta')) {
-      map.addSource('ruta', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addSource('ruta', { type: 'geojson', tolerance: 0, data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({ id: 'ruta-b', type: 'line', source: 'ruta', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#fff', 'line-width': 8 } });
       map.addLayer({ id: 'ruta-l', type: 'line', source: 'ruta', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'c'], 'line-width': 5 } });
     }
@@ -194,11 +194,16 @@
     if (!ruta) return;
     const km = {}; NIV[tec].forEach(n => km[n.k] = 0); km.sin = 0;
     let tramos = 0, prev = null;
-    const feats = puntosRuta.map(p => {
-      const cods = tec === '4g' ? ruta.c4 : ruta.c3;
+    // Une los tramos consecutivos del mismo nivel en una sola línea: así se ve completa desde el primer momento
+    // (miles de tramos cortitos desaparecen al alejar el mapa)
+    const feats = [];
+    let actual = null;
+    const cods = tec === '4g' ? ruta.c4 : ruta.c3;
+    puntosRuta.forEach(p => {
       const n = cods ? nivelCodigo(Math.max(cods[p.i] || 0, cods[p.i + 1] || 0)) : nivelEn(p.m); km[n.k] += p.km;
       if (n === SIN && prev !== SIN) tramos++; prev = n;
-      return { type: 'Feature', properties: { c: n.c }, geometry: { type: 'LineString', coordinates: [p.a, p.b] } };
+      if (actual && actual.properties.c === n.c) actual.geometry.coordinates.push(p.b);
+      else { actual = { type: 'Feature', properties: { c: n.c }, geometry: { type: 'LineString', coordinates: [p.a, p.b] } }; feats.push(actual); }
     });
     map.getSource('ruta').setData({ type: 'FeatureCollection', features: feats });
     const tot = puntosRuta.reduce((s, p) => s + p.km, 0), pct = v => (100 * v / tot);
