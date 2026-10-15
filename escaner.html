@@ -11,18 +11,20 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #111; color: #fff; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
   #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .marco { position: absolute; left: 6%; right: 6%; top: 36%; height: 22%; border: 3px solid rgba(255,255,255,.9); border-radius: 14px;
-           box-shadow: 0 0 0 9999px rgba(0,0,0,.45); }
+  .marco { position: absolute; left: 5%; right: 5%; top: 34%; height: 20%; border: 3px solid rgba(255,255,255,.9); border-radius: 14px;
+           box-shadow: 0 0 0 9999px rgba(0,0,0,.45); transition: border-color .2s; }
+  .marco.ok { border-color: #3ddc84; }
   .marco::after { content: ''; position: absolute; left: 4%; right: 4%; top: 50%; height: 2px; background: #ff4d4d; box-shadow: 0 0 8px #ff4d4d; }
   .arriba { position: absolute; top: 0; left: 0; right: 0; padding: 14px 16px; background: linear-gradient(#000c, #0000); }
   .arriba b { font-size: 16px; } .arriba div { font-size: 13px; color: #ddd; margin-top: 3px; }
   .abajo { position: absolute; bottom: 0; left: 0; right: 0; padding: 12px 14px 18px; background: linear-gradient(#0000, #000d 30%); }
-  #estado { font-size: 14px; text-align: center; min-height: 20px; margin-bottom: 8px; }
-  #lista { max-height: 28vh; overflow-y: auto; font-size: 13px; }
+  #estado { font-size: 14px; text-align: center; min-height: 20px; margin-bottom: 4px; }
+  #info { font-size: 11px; text-align: center; color: #999; min-height: 14px; }
+  #lista { max-height: 26vh; overflow-y: auto; font-size: 13px; }
   .it { background: rgba(255,255,255,.12); border-radius: 10px; padding: 8px 10px; margin-top: 6px; display: flex; justify-content: space-between; gap: 8px; }
   .ok { color: #7ee2a0; } .err { color: #ff9b8a; }
   .fila { display: flex; gap: 8px; margin-top: 10px; }
-  button { flex: 1; border: 0; border-radius: 10px; padding: 11px; font-size: 14px; font-weight: 600; background: #fff; color: #111; }
+  button { flex: 1; border: 0; border-radius: 10px; padding: 11px 6px; font-size: 14px; font-weight: 600; background: #fff; color: #111; }
   button.sec { background: rgba(255,255,255,.18); color: #fff; }
   #velo { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 30px; background: #111; font-size: 15px; line-height: 1.5; z-index: 9; }
   #manual { display: none; margin-top: 8px; gap: 8px; } #manual.on { display: flex; }
@@ -30,14 +32,16 @@
 </style>
 </head>
 <body>
-<video id="video" playsinline muted></video>
-<div class="marco"></div>
-<div class="arriba"><b>📷 Escanear SIM</b><div>Apunta al código de barras del ICCID dentro del recuadro</div></div>
+<video id="video" playsinline muted autoplay></video>
+<div class="marco" id="marco"></div>
+<div class="arriba"><b>📷 Escanear SIM</b><div>Pon el código de barras del ICCID dentro del recuadro, a unos 10–15 cm</div></div>
 <div class="abajo">
   <div id="estado">Iniciando cámara…</div>
+  <div id="info"></div>
   <div id="lista"></div>
   <div id="manual"><input id="iManual" inputmode="numeric" placeholder="Escribe el ICCID"><button id="bEnviar" style="flex:0 0 90px">Consultar</button></div>
   <div class="fila">
+    <button class="sec" id="bLuz">🔦 Luz</button>
     <button class="sec" id="bCam">🔄 Cámara</button>
     <button class="sec" id="bTeclado">⌨️ Escribir</button>
     <button id="bListo">✅ Listo</button>
@@ -54,79 +58,196 @@
   const initData = tg ? tg.initData : '';
   if (tg) { tg.ready(); tg.expand(); }
   const $ = id => document.getElementById(id);
-  const vistos = {};                // ICCID ya enviados en esta sesión
-  let lector = null, camaras = [], iCam = 0, ocupado = false;
+  const video = $('video');
+  const vistos = {};
+  let stream = null, track = null, camaras = [], iCam = -1, ocupado = false, corriendo = false, luz = false;
+  let nativo = null, zx = null, metodo = '';
+  const lienzo = document.createElement('canvas');
+  const ctx = lienzo.getContext('2d', { willReadFrequently: true });
 
   function velo(t) { $('velo').innerHTML = t; $('velo').style.display = 'flex'; }
   function estado(t, cls) { $('estado').innerHTML = t; $('estado').className = cls || ''; }
+  function info(t) { $('info').textContent = t; }
   function vibra(tipo) { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(tipo); } catch (e) { } }
+  function manual() { $('manual').classList.add('on'); }
 
   if (!initData || !API) { velo('🔒 Este escáner sólo funciona abierto desde el bot de Telegram.'); return; }
 
+  /* ---------- Envío al bot ---------- */
   async function enviar(iccid) {
     if (vistos[iccid] || ocupado) return;
     vistos[iccid] = 1; ocupado = true;
     vibra('success');
+    $('marco').classList.add('ok'); setTimeout(() => $('marco').classList.remove('ok'), 900);
     const it = document.createElement('div'); it.className = 'it';
     it.innerHTML = '<span>…' + iccid.slice(-8) + '</span><span>consultando…</span>';
     $('lista').prepend(it);
     estado('Leído: <b>' + iccid + '</b>');
     try {
       const r = await fetch(API, { method: 'POST', body: JSON.stringify({ a: 'sim', iccid: iccid, initData: initData }) });
-      const j = await r.json();
+      const txt = await r.text();
+      let j; try { j = JSON.parse(txt); } catch (e) { j = { ok: false, msg: 'Respuesta inesperada del servidor (¿publicaste la nueva versión?)' }; }
       it.lastChild.textContent = j.ok ? '✓ enviado al chat' : '✗ ' + (j.msg || 'error');
       it.lastChild.className = j.ok ? 'ok' : 'err';
       if (!j.ok) { delete vistos[iccid]; vibra('error'); }
       estado(j.ok ? 'Listo. La ficha llegó al chat. Escanea otra o toca ✅ Listo.' : (j.msg || 'No se pudo consultar'), j.ok ? 'ok' : 'err');
     } catch (e) {
       delete vistos[iccid]; it.lastChild.textContent = '✗ sin conexión'; it.lastChild.className = 'err';
-      estado('Sin conexión. Intenta de nuevo.', 'err');
+      estado('Sin conexión con el servidor: ' + (e.message || e), 'err');
     }
     setTimeout(() => { ocupado = false; }, 1500);
   }
 
-  /** Limpia lo leído: sólo dígitos; ICCID de 18 a 22 dígitos (casi siempre empieza con 89) */
   function iccidDe(texto) {
     const d = String(texto || '').replace(/[^0-9]/g, '');
     return d.length >= 18 && d.length <= 22 ? d : null;
   }
+  function leido(texto) {
+    const iccid = iccidDe(texto);
+    if (iccid) enviar(iccid);
+    else if (!ocupado) estado('Leí un código que no es ICCID (' + String(texto).slice(0, 24) + '). Apunta al del ICCID.', 'err');
+  }
 
-  async function iniciar() {
-    try {
-      const ZX = window.ZXing;
-      const hints = new Map();
-      hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [ZX.BarcodeFormat.CODE_128, ZX.BarcodeFormat.CODE_39, ZX.BarcodeFormat.ITF,
-                                                     ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.QR_CODE, ZX.BarcodeFormat.DATA_MATRIX]);
-      hints.set(ZX.DecodeHintType.TRY_HARDER, true);
-      lector = new ZX.BrowserMultiFormatReader(hints, 300);
-      camaras = await lector.listVideoInputDevices();
-      // Prefiere la cámara trasera
-      const trasera = camaras.findIndex(c => /back|rear|trasera|environment/i.test(c.label));
-      iCam = trasera >= 0 ? trasera : Math.max(0, camaras.length - 1);
-      arrancar();
-    } catch (e) {
-      estado('No pude abrir la cámara. Da permiso a Telegram para usar la cámara o usa ⌨️ Escribir.', 'err');
-      $('manual').classList.add('on');
+  /* ---------- Lectores ---------- */
+  async function prepararLectores() {
+    if ('BarcodeDetector' in window) {
+      try {
+        const sop = await BarcodeDetector.getSupportedFormats();
+        const want = ['code_128', 'code_39', 'itf', 'ean_13', 'qr_code', 'data_matrix'].filter(f => sop.includes(f));
+        if (want.length) { nativo = new BarcodeDetector({ formats: want }); metodo = 'nativo'; }
+      } catch (e) { nativo = null; }
     }
-  }
-  function arrancar() {
-    lector.reset();
-    const id = camaras[iCam] ? camaras[iCam].deviceId : undefined;
-    estado('Buscando código de barras…');
-    lector.decodeFromVideoDevice(id, 'video', (res) => {
-      if (!res) return;
-      const iccid = iccidDe(res.getText());
-      if (iccid) enviar(iccid);
-      else if (!ocupado) estado('Leí un código que no es ICCID (' + res.getText().slice(0, 24) + '). Apunta al código del ICCID.', 'err');
-    }).catch(() => { estado('No pude usar esa cámara. Prueba 🔄 Cámara o ⌨️ Escribir.', 'err'); $('manual').classList.add('on'); });
+    if (window.ZXing) {
+      const ZX = window.ZXing, hints = new Map();
+      hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [ZX.BarcodeFormat.CODE_128, ZX.BarcodeFormat.CODE_39, ZX.BarcodeFormat.ITF,
+        ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.QR_CODE, ZX.BarcodeFormat.DATA_MATRIX]);
+      hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+      zx = new ZX.MultiFormatReader(); zx.setHints(hints);
+      if (!metodo) metodo = 'zxing';
+    }
+    if (!nativo && !zx) throw new Error('No cargó el lector de códigos (revisa tu conexión).');
   }
 
-  $('bCam').onclick = () => { if (camaras.length > 1) { iCam = (iCam + 1) % camaras.length; arrancar(); } };
+  /* ---------- Cámara ---------- */
+  async function abrirCamara() {
+    detener();
+    const base = { width: { ideal: 1920 }, height: { ideal: 1080 }, focusMode: 'continuous' };
+    const v = iCam >= 0 && camaras[iCam] ? Object.assign({ deviceId: { exact: camaras[iCam].deviceId } }, base)
+                                          : Object.assign({ facingMode: { ideal: 'environment' } }, base);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+    } catch (e) {
+      // segundo intento con lo mínimo
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+    video.srcObject = stream;
+    await video.play().catch(() => { });
+    track = stream.getVideoTracks()[0];
+    try { // enfoque continuo y un poco de zoom si el teléfono lo permite
+      const cap = track.getCapabilities ? track.getCapabilities() : {};
+      const adv = {};
+      if (cap.focusMode && cap.focusMode.includes('continuous')) adv.focusMode = 'continuous';
+      if (cap.zoom) adv.zoom = Math.min(cap.zoom.max, Math.max(cap.zoom.min, 1.5));
+      if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] });
+      $('bLuz').style.display = cap.torch ? '' : 'none';
+    } catch (e) { $('bLuz').style.display = 'none'; }
+    if (!camaras.length) {
+      try { camaras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); } catch (e) { }
+    }
+    const s = track.getSettings ? track.getSettings() : {};
+    info((s.width || video.videoWidth) + '×' + (s.height || video.videoHeight) + ' · lector ' + metodo + ' · ' + camaras.length + ' cámara(s)');
+    estado('Buscando código de barras…');
+    corriendo = true; ciclo();
+  }
+  function detener() {
+    corriendo = false;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; track = null; luz = false;
+  }
+
+  /* ---------- Bucle de lectura: recorta al recuadro y decodifica ---------- */
+  let intentos = 0;
+  async function ciclo() {
+    if (!corriendo) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (vw && vh && !ocupado) {
+      intentos++;
+      // Zona del recuadro en coordenadas del video (object-fit: cover)
+      const W = video.clientWidth, H = video.clientHeight;
+      const esc = Math.max(W / vw, H / vh);
+      const offX = (vw * esc - W) / 2, offY = (vh * esc - H) / 2;
+      const m = $('marco').getBoundingClientRect();
+      let sx = (m.left + offX) / esc, sy = (m.top + offY) / esc, sw = m.width / esc, sh = m.height / esc;
+      // margen extra vertical por si el código queda un poco fuera
+      sy = Math.max(0, sy - sh * 0.3); sh = Math.min(vh - sy, sh * 1.6);
+      sx = Math.max(0, sx); sw = Math.min(vw - sx, sw);
+      // alterna recorte y cuadro completo
+      const completo = intentos % 4 === 0;
+      if (completo) { sx = 0; sy = 0; sw = vw; sh = vh; }
+      lienzo.width = Math.round(sw); lienzo.height = Math.round(sh);
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, lienzo.width, lienzo.height);
+      let texto = null;
+      try {
+        if (nativo) {
+          const r = await nativo.detect(lienzo);
+          const buena = r.find(b => iccidDe(b.rawValue)) || r[0];
+          if (buena) texto = buena.rawValue;
+        }
+        if (!texto && zx) texto = decodZx(lienzo) || (intentos % 2 ? null : decodZxGirado());
+      } catch (e) { }
+      if (texto) leido(texto);
+      if (intentos === 40 && !Object.keys(vistos).length) estado('Acerca o aleja un poco el teléfono y evita reflejos. Si no lee, usa ⌨️ Escribir.');
+    }
+    setTimeout(ciclo, 120);
+  }
+  function decodZx(cv) {
+    const ZX = window.ZXing;
+    try {
+      const src = new ZX.HTMLCanvasElementLuminanceSource(cv);
+      return zx.decodeWithState(new ZX.BinaryBitmap(new ZX.HybridBinarizer(src))).getText();
+    } catch (e) { zx.reset && zx.reset(); return null; }
+  }
+  // Por si la SIM está en vertical
+  const lienzo2 = document.createElement('canvas'), ctx2 = lienzo2.getContext('2d', { willReadFrequently: true });
+  function decodZxGirado() {
+    lienzo2.width = lienzo.height; lienzo2.height = lienzo.width;
+    ctx2.setTransform(0, 1, -1, 0, lienzo.height, 0); ctx2.drawImage(lienzo, 0, 0);
+    return decodZx(lienzo2);
+  }
+
+  /* ---------- Botones ---------- */
+  $('bCam').onclick = async () => {
+    if (camaras.length < 2) { estado('Sólo hay una cámara disponible.'); return; }
+    iCam = (iCam + 1) % camaras.length;
+    try { await abrirCamara(); } catch (e) { errorCamara(e); }
+  };
+  $('bLuz').onclick = async () => {
+    if (!track) return;
+    try { luz = !luz; await track.applyConstraints({ advanced: [{ torch: luz }] }); } catch (e) { estado('Este teléfono no permite encender la luz desde aquí.', 'err'); }
+  };
   $('bTeclado').onclick = () => { $('manual').classList.toggle('on'); $('iManual').focus(); };
   $('bEnviar').onclick = () => { const v = iccidDe($('iManual').value); if (v) { enviar(v); $('iManual').value = ''; } else estado('Ese número no parece un ICCID (18-22 dígitos).', 'err'); };
-  $('bListo').onclick = () => { try { lector && lector.reset(); } catch (e) { } if (tg) tg.close(); };
-  window.__probarIccid = iccidDe;   // para pruebas
-  iniciar();
+  $('bListo').onclick = () => { detener(); if (tg) tg.close(); };
+
+  function errorCamara(e) {
+    const n = (e && e.name) || '';
+    let t = 'No pude abrir la cámara (' + (n || e.message || e) + ').';
+    if (n === 'NotAllowedError' || n === 'SecurityError') t = '🚫 Telegram no tiene permiso de cámara. Ve a Ajustes del teléfono → Aplicaciones → Telegram → Permisos → Cámara → Permitir, y vuelve a abrir el escáner.';
+    else if (n === 'NotFoundError' || n === 'OverconstrainedError') t = 'No encontré una cámara utilizable. Prueba 🔄 Cámara o ⌨️ Escribir.';
+    else if (n === 'NotReadableError') t = 'La cámara está ocupada por otra app. Ciérrala y vuelve a abrir el escáner.';
+    else if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) t = 'Esta versión de Telegram no permite usar la cámara aquí. Actualiza Telegram o usa 📷 foto en el chat.';
+    estado(t, 'err'); manual();
+  }
+
+  window.__probarIccid = iccidDe;
+  (async () => {
+    try {
+      await prepararLectores();
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw { name: 'SinCamara' };
+      await abrirCamara();
+    } catch (e) { errorCamara(e); }
+  })();
+  document.addEventListener('visibilitychange', () => { if (document.hidden) detener(); else if (!stream) abrirCamara().catch(errorCamara); });
 })();
 </script>
 </body>
