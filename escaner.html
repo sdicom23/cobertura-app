@@ -54,6 +54,16 @@
   <div style="display:none">
   </div>
 </div>
+<div id="inicio" style="position:absolute;inset:0;z-index:8;background:#111;display:flex;flex-direction:column;justify-content:center;padding:28px;text-align:center;gap:14px">
+  <div style="font-size:54px">📷</div>
+  <b style="font-size:19px">Escanear SIM</b>
+  <div style="font-size:14px;color:#ccc;line-height:1.5">Toma una foto de la SIM con la cámara del teléfono.<br>Que se vea <b>completo el código de barras o el número</b>, de frente y sin reflejos.<br>Puedes fotografiar varias SIMs juntas.</div>
+  <button id="bFoto2" style="padding:16px;font-size:16px">📸 Tomar foto</button>
+  <div id="estado2" style="font-size:14px;min-height:20px"></div>
+  <div id="lista2" style="font-size:13px;text-align:left"></div>
+  <div class="fila"><button class="sec" id="bVivo">🎥 Video en vivo</button><button class="sec" id="bTeclado2">⌨️ Escribir</button><button class="sec" id="bListo2">✅ Listo</button></div>
+  <div id="manual2" style="display:none;gap:8px"><input id="iManual2" inputmode="numeric" placeholder="Escribe el ICCID" style="flex:1;min-width:0;border:0;border-radius:10px;padding:10px;font-size:15px"><button id="bEnviar2" style="flex:0 0 90px">Consultar</button></div>
+</div>
 <div id="velo"></div>
 
 <script>
@@ -74,7 +84,8 @@
   const ctx = lienzo.getContext('2d', { willReadFrequently: true });
 
   function velo(t) { $('velo').innerHTML = t; $('velo').style.display = 'flex'; }
-  function estado(t, cls) { $('estado').innerHTML = t; $('estado').className = cls || ''; }
+  let modoFoto = true;
+  function estado(t, cls) { const e = $(modoFoto ? 'estado2' : 'estado'); e.innerHTML = t; e.className = cls || ''; }
   function info(t) { $('info').textContent = t; }
   function vibra(tipo) { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(tipo); } catch (e) { } }
   function manual() { $('manual').classList.add('on'); }
@@ -90,7 +101,7 @@
     $('marco').classList.add('ok'); setTimeout(() => $('marco').classList.remove('ok'), 900);
     const it = document.createElement('div'); it.className = 'it';
     it.innerHTML = '<span>…' + iccid.slice(-8) + '</span><span>consultando…</span>';
-    $('lista').prepend(it);
+    $(modoFoto ? 'lista2' : 'lista').prepend(it);
     estado('Leído: <b>' + iccid + '</b>');
     try {
       const r = await fetch(API, { method: 'POST', body: JSON.stringify({ a: 'sim', iccid: iccid, initData: initData }) });
@@ -286,7 +297,7 @@
       if (texto && iccidDe(texto)) { leido(texto); return; }
       estado('Leyendo el número impreso con IA…');
       const it = document.createElement('div'); it.className = 'it';
-      it.innerHTML = '<span>📸 foto</span><span>leyendo…</span>'; $('lista').prepend(it);
+      it.innerHTML = '<span>📸 foto</span><span>leyendo…</span>'; $(modoFoto ? 'lista2' : 'lista').prepend(it);
       const r = await fetch(API, { method: 'POST', body: JSON.stringify({ a: 'foto', img: aJpeg(img, 1600), initData: initData }) });
       let j; try { j = JSON.parse(await r.text()); } catch (e) { j = { ok: false, msg: 'Respuesta inesperada del servidor (¿publicaste la nueva versión?)' }; }
       if (j.ok) { (j.iccids || []).forEach(x => vistos[x] = 1); vibra('success'); }
@@ -346,11 +357,20 @@
   (async () => {
     try {
       await prepararLectores();
+    } catch (e) { estado('El lector local no cargó; las fotos se leerán con IA.', 'err'); }
+  })();
+  $('bFoto2').onclick = () => $('bFoto').onclick();
+  $('bListo2').onclick = () => $('bListo').onclick();
+  $('bTeclado2').onclick = () => { const m = $('manual2'); m.style.display = m.style.display === 'flex' ? 'none' : 'flex'; $('iManual2').focus(); };
+  $('bEnviar2').onclick = () => { const v = iccidDe($('iManual2').value); if (v) { enviar(v); $('iManual2').value = ''; } else estado('Ese número no parece un ICCID (18-22 dígitos).', 'err'); };
+  $('bVivo').onclick = async () => {
+    modoFoto = false; $('inicio').style.display = 'none';
+    try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw { name: 'SinCamara' };
       await abrirCamara();
     } catch (e) { errorCamara(e); }
-  })();
-  document.addEventListener('visibilitychange', () => { if (document.hidden) detener(); else if (!stream) abrirCamara().catch(errorCamara); });
+  };
+  document.addEventListener('visibilitychange', () => { if (modoFoto) return; if (document.hidden) detener(); else if (!stream) abrirCamara().catch(errorCamara); });
 })();
 </script>
 </body>
