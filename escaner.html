@@ -12,7 +12,7 @@
   html, body { margin: 0; height: 100%; background: #111; color: #fff; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
   #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: brightness(1.15) contrast(1.1); }
   .marco { position: absolute; left: 4%; right: 4%; top: 28%; height: 26%; border: 3px solid rgba(255,255,255,.9); border-radius: 14px;
-           box-shadow: 0 0 0 9999px rgba(0,0,0,.22); transition: border-color .2s; }
+           box-shadow: 0 0 0 9999px rgba(0,0,0,.08); transition: border-color .2s; }
   .marco.ok { border-color: #3ddc84; }
   .marco::after { content: ''; position: absolute; left: 4%; right: 4%; top: 50%; height: 2px; background: #ff4d4d; box-shadow: 0 0 8px #ff4d4d; }
   .arriba { position: absolute; top: 0; left: 0; right: 0; padding: 14px 16px; background: linear-gradient(#000c, #0000); }
@@ -163,7 +163,9 @@
       if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] });
       $('bLuz').style.display = cap.torch ? '' : 'none';
       $('bZoom').style.display = cap.zoom ? '' : 'none';
-      zoomActual = 1; $('bZoom').textContent = '🔍 1x';
+      zoomActual = 1;
+      if (cap.zoom && cap.zoom.max >= 2) { try { await track.applyConstraints({ advanced: [{ zoom: 2 }] }); zoomActual = 2; } catch (e) { } }
+      $('bZoom').textContent = '🔍 ' + zoomActual + 'x';
     } catch (e) { $('bLuz').style.display = 'none'; $('bZoom').style.display = 'none'; }
     if (!camaras.length) {
       try {
