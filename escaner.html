@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Escanear SIM</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #111; color: #fff; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .marco { position: absolute; left: 6%; right: 6%; top: 36%; height: 22%; border: 3px solid rgba(255,255,255,.9); border-radius: 14px;
+           box-shadow: 0 0 0 9999px rgba(0,0,0,.45); }
+  .marco::after { content: ''; position: absolute; left: 4%; right: 4%; top: 50%; height: 2px; background: #ff4d4d; box-shadow: 0 0 8px #ff4d4d; }
+  .arriba { position: absolute; top: 0; left: 0; right: 0; padding: 14px 16px; background: linear-gradient(#000c, #0000); }
+  .arriba b { font-size: 16px; } .arriba div { font-size: 13px; color: #ddd; margin-top: 3px; }
+  .abajo { position: absolute; bottom: 0; left: 0; right: 0; padding: 12px 14px 18px; background: linear-gradient(#0000, #000d 30%); }
+  #estado { font-size: 14px; text-align: center; min-height: 20px; margin-bottom: 8px; }
+  #lista { max-height: 28vh; overflow-y: auto; font-size: 13px; }
+  .it { background: rgba(255,255,255,.12); border-radius: 10px; padding: 8px 10px; margin-top: 6px; display: flex; justify-content: space-between; gap: 8px; }
+  .ok { color: #7ee2a0; } .err { color: #ff9b8a; }
+  .fila { display: flex; gap: 8px; margin-top: 10px; }
+  button { flex: 1; border: 0; border-radius: 10px; padding: 11px; font-size: 14px; font-weight: 600; background: #fff; color: #111; }
+  button.sec { background: rgba(255,255,255,.18); color: #fff; }
+  #velo { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 30px; background: #111; font-size: 15px; line-height: 1.5; z-index: 9; }
+  #manual { display: none; margin-top: 8px; gap: 8px; } #manual.on { display: flex; }
+  #manual input { flex: 1; min-width: 0; border: 0; border-radius: 10px; padding: 10px; font-size: 15px; }
+</style>
+</head>
+<body>
+<video id="video" playsinline muted></video>
+<div class="marco"></div>
+<div class="arriba"><b>📷 Escanear SIM</b><div>Apunta al código de barras del ICCID dentro del recuadro</div></div>
+<div class="abajo">
+  <div id="estado">Iniciando cámara…</div>
+  <div id="lista"></div>
+  <div id="manual"><input id="iManual" inputmode="numeric" placeholder="Escribe el ICCID"><button id="bEnviar" style="flex:0 0 90px">Consultar</button></div>
+  <div class="fila">
+    <button class="sec" id="bCam">🔄 Cámara</button>
+    <button class="sec" id="bTeclado">⌨️ Escribir</button>
+    <button id="bListo">✅ Listo</button>
+  </div>
+</div>
+<div id="velo"></div>
+
+<script>
+(function () {
+  'use strict';
+  const q = new URLSearchParams(location.search);
+  const API = q.get('api') || '';
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const initData = tg ? tg.initData : '';
+  if (tg) { tg.ready(); tg.expand(); }
+  const $ = id => document.getElementById(id);
+  const vistos = {};                // ICCID ya enviados en esta sesión
+  let lector = null, camaras = [], iCam = 0, ocupado = false;
+
+  function velo(t) { $('velo').innerHTML = t; $('velo').style.display = 'flex'; }
+  function estado(t, cls) { $('estado').innerHTML = t; $('estado').className = cls || ''; }
+  function vibra(tipo) { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(tipo); } catch (e) { } }
+
+  if (!initData || !API) { velo('🔒 Este escáner sólo funciona abierto desde el bot de Telegram.'); return; }
+
+  async function enviar(iccid) {
+    if (vistos[iccid] || ocupado) return;
+    vistos[iccid] = 1; ocupado = true;
+    vibra('success');
+    const it = document.createElement('div'); it.className = 'it';
+    it.innerHTML = '<span>…' + iccid.slice(-8) + '</span><span>consultando…</span>';
+    $('lista').prepend(it);
+    estado('Leído: <b>' + iccid + '</b>');
+    try {
+      const r = await fetch(API, { method: 'POST', body: JSON.stringify({ a: 'sim', iccid: iccid, initData: initData }) });
+      const j = await r.json();
+      it.lastChild.textContent = j.ok ? '✓ enviado al chat' : '✗ ' + (j.msg || 'error');
+      it.lastChild.className = j.ok ? 'ok' : 'err';
+      if (!j.ok) { delete vistos[iccid]; vibra('error'); }
+      estado(j.ok ? 'Listo. La ficha llegó al chat. Escanea otra o toca ✅ Listo.' : (j.msg || 'No se pudo consultar'), j.ok ? 'ok' : 'err');
+    } catch (e) {
+      delete vistos[iccid]; it.lastChild.textContent = '✗ sin conexión'; it.lastChild.className = 'err';
+      estado('Sin conexión. Intenta de nuevo.', 'err');
+    }
+    setTimeout(() => { ocupado = false; }, 1500);
+  }
+
+  /** Limpia lo leído: sólo dígitos; ICCID de 18 a 22 dígitos (casi siempre empieza con 89) */
+  function iccidDe(texto) {
+    const d = String(texto || '').replace(/[^0-9]/g, '');
+    return d.length >= 18 && d.length <= 22 ? d : null;
+  }
+
+  async function iniciar() {
+    try {
+      const ZX = window.ZXing;
+      const hints = new Map();
+      hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [ZX.BarcodeFormat.CODE_128, ZX.BarcodeFormat.CODE_39, ZX.BarcodeFormat.ITF,
+                                                     ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.QR_CODE, ZX.BarcodeFormat.DATA_MATRIX]);
+      hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+      lector = new ZX.BrowserMultiFormatReader(hints, 300);
+      camaras = await lector.listVideoInputDevices();
+      // Prefiere la cámara trasera
+      const trasera = camaras.findIndex(c => /back|rear|trasera|environment/i.test(c.label));
+      iCam = trasera >= 0 ? trasera : Math.max(0, camaras.length - 1);
+      arrancar();
+    } catch (e) {
+      estado('No pude abrir la cámara. Da permiso a Telegram para usar la cámara o usa ⌨️ Escribir.', 'err');
+      $('manual').classList.add('on');
+    }
+  }
+  function arrancar() {
+    lector.reset();
+    const id = camaras[iCam] ? camaras[iCam].deviceId : undefined;
+    estado('Buscando código de barras…');
+    lector.decodeFromVideoDevice(id, 'video', (res) => {
+      if (!res) return;
+      const iccid = iccidDe(res.getText());
+      if (iccid) enviar(iccid);
+      else if (!ocupado) estado('Leí un código que no es ICCID (' + res.getText().slice(0, 24) + '). Apunta al código del ICCID.', 'err');
+    }).catch(() => { estado('No pude usar esa cámara. Prueba 🔄 Cámara o ⌨️ Escribir.', 'err'); $('manual').classList.add('on'); });
+  }
+
+  $('bCam').onclick = () => { if (camaras.length > 1) { iCam = (iCam + 1) % camaras.length; arrancar(); } };
+  $('bTeclado').onclick = () => { $('manual').classList.toggle('on'); $('iManual').focus(); };
+  $('bEnviar').onclick = () => { const v = iccidDe($('iManual').value); if (v) { enviar(v); $('iManual').value = ''; } else estado('Ese número no parece un ICCID (18-22 dígitos).', 'err'); };
+  $('bListo').onclick = () => { try { lector && lector.reset(); } catch (e) { } if (tg) tg.close(); };
+  window.__probarIccid = iccidDe;   // para pruebas
+  iniciar();
+})();
+</script>
+</body>
+</html>
