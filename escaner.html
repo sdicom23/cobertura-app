@@ -34,7 +34,7 @@
 <body>
 <video id="video" playsinline muted autoplay></video>
 <div class="marco" id="marco"></div>
-<div class="arriba"><b>📷 Escanear SIM</b><div>Código del ICCID dentro del recuadro, a unos 15 cm. Toca la pantalla para enfocar. Si no lee, usa 🔍 o 📸.</div></div>
+<div class="arriba"><b>📷 Escanear SIM</b><div>Si el video sale borroso, toca <b>📸 Tomar foto</b>: abre la cámara normal del teléfono con autoenfoque.</div></div>
 <div class="abajo">
   <div id="estado">Iniciando cámara…</div>
   <div id="info"></div>
@@ -43,12 +43,15 @@
   <div class="fila">
     <button class="sec" id="bLuz">🔦 Luz</button>
     <button class="sec" id="bZoom">🔍 1x</button>
-    <button class="sec" id="bCam">🔄</button>
+    <button class="sec" id="bCam">🔄 Lente</button>
     <button class="sec" id="bTeclado">⌨️</button>
   </div>
   <div class="fila">
-    <button class="sec" id="bFoto" style="flex:2">📸 Capturar nítida</button>
-    <button id="bListo">✅ Listo</button>
+    <button id="bFoto" style="flex:2">📸 Tomar foto (más nítida)</button>
+    <button class="sec" id="bListo">✅ Listo</button>
+  </div>
+  <input type="file" id="fFoto" accept="image/*" capture="environment" hidden>
+  <div style="display:none">
   </div>
 </div>
 <div id="velo"></div>
@@ -163,10 +166,22 @@
       zoomActual = 1; $('bZoom').textContent = '🔍 1x';
     } catch (e) { $('bLuz').style.display = 'none'; $('bZoom').style.display = 'none'; }
     if (!camaras.length) {
-      try { camaras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); } catch (e) { }
+      try {
+        const todas = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+        const traseras = todas.filter(d => /back|rear|trasera|environment|facing back/i.test(d.label));
+        camaras = traseras.length ? traseras : todas;
+      } catch (e) { }
+      // Primera vez: usa la lente principal ("camera2 0" / "camera 0") o la que el usuario eligió antes
+      if (iCam < 0 && camaras.length > 1) {
+        let pref = -1; try { pref = camaras.findIndex(c => c.deviceId === localStorage.getItem('camSIM')); } catch (e) { }
+        if (pref < 0) pref = camaras.findIndex(c => /camera2? 0\b|camera 0/i.test(c.label));
+        const actual = track.getSettings ? track.getSettings().deviceId : '';
+        if (pref >= 0 && camaras[pref].deviceId !== actual) { iCam = pref; return abrirCamara(); }
+        iCam = Math.max(0, camaras.findIndex(c => c.deviceId === actual));
+      }
     }
     const s = track.getSettings ? track.getSettings() : {};
-    info((s.width || video.videoWidth) + '×' + (s.height || video.videoHeight) + ' · lector ' + metodo + ' · ' + camaras.length + ' cámara(s)');
+    info((s.width || video.videoWidth) + '×' + (s.height || video.videoHeight) + ' · lente ' + (iCam >= 0 ? iCam + 1 : 1) + '/' + Math.max(1, camaras.length) + ' · ' + metodo);
     estado('Buscando código de barras…');
     corriendo = true; ciclo();
   }
@@ -232,7 +247,8 @@
   $('bCam').onclick = async () => {
     if (camaras.length < 2) { estado('Sólo hay una cámara disponible.'); return; }
     iCam = (iCam + 1) % camaras.length;
-    try { await abrirCamara(); } catch (e) { errorCamara(e); }
+    try { localStorage.setItem('camSIM', camaras[iCam].deviceId); } catch (e) { }
+    try { await abrirCamara(); estado('Lente ' + (iCam + 1) + ' de ' + camaras.length + '. Si sigue borroso, toca 🔄 otra vez o usa 📸.'); } catch (e) { errorCamara(e); }
   };
   $('bLuz').onclick = async () => {
     if (!track) return;
@@ -256,33 +272,60 @@
       setTimeout(() => { if (track && capacidades.focusMode.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => { }); }, 1200);
     } catch (e) { }
   }
-  // Foto a máxima resolución (más nítida que el video) y la decodifica
-  $('bFoto').onclick = async () => {
-    if (!track) return;
-    estado('Capturando foto…');
+  // Foto con la cámara REAL del teléfono (autoenfoque nativo) → se lee aquí; si no, la lee Gemini en el servidor
+  $('bFoto').onclick = () => { $('fFoto').value = ''; $('fFoto').click(); };
+  $('fFoto').onchange = async () => {
+    const f = $('fFoto').files && $('fFoto').files[0];
+    if (!f) return;
+    estado('Leyendo la foto…');
     try {
-      let bmp;
-      if ('ImageCapture' in window) {
-        const ic = new ImageCapture(track);
-        const espera = (ms) => new Promise((_, no) => setTimeout(() => no(new Error('tiempo')), ms));
-        try { bmp = await createImageBitmap(await Promise.race([ic.takePhoto(), espera(4000)])); }
-        catch (e) { try { bmp = await Promise.race([ic.grabFrame(), espera(2000)]); } catch (e2) { bmp = video; } }
-      } else { bmp = video; }
-      const w = bmp.width || video.videoWidth, h = bmp.height || video.videoHeight;
-      const c = document.createElement('canvas'), k = Math.min(1, 2400 / Math.max(w, h));
-      c.width = Math.round(w * k); c.height = Math.round(h * k);
-      const cx = c.getContext('2d', { willReadFrequently: true });
-      let texto = null;
-      for (const f of ['none', 'grayscale(1) contrast(1.6)', 'grayscale(1) contrast(2.2) brightness(1.2)']) {
-        cx.filter = f; cx.drawImage(bmp, 0, 0, c.width, c.height);
-        if (nativo) { try { const r = await nativo.detect(c); const b = r.find(x => iccidDe(x.rawValue)) || r[0]; if (b) texto = b.rawValue; } catch (e) { } }
-        if (!texto && zx) texto = decodZx(c);
-        if (texto) break;
-      }
-      if (texto) leido(texto);
-      else estado('No encontré el código en la foto. Acércate un poco, evita reflejos y vuelve a intentar, o manda la foto en el chat.', 'err');
-    } catch (e) { estado('No pude tomar la foto: ' + (e.message || e), 'err'); }
+      const img = await cargarImagen(f);
+      const texto = await decodificarImagen(img);
+      if (texto && iccidDe(texto)) { leido(texto); return; }
+      estado('Leyendo el número impreso con IA…');
+      const it = document.createElement('div'); it.className = 'it';
+      it.innerHTML = '<span>📸 foto</span><span>leyendo…</span>'; $('lista').prepend(it);
+      const r = await fetch(API, { method: 'POST', body: JSON.stringify({ a: 'foto', img: aJpeg(img, 1600), initData: initData }) });
+      let j; try { j = JSON.parse(await r.text()); } catch (e) { j = { ok: false, msg: 'Respuesta inesperada del servidor (¿publicaste la nueva versión?)' }; }
+      if (j.ok) { (j.iccids || []).forEach(x => vistos[x] = 1); vibra('success'); }
+      it.lastChild.textContent = j.ok ? '✓ ' + j.n + ' ICCID enviado(s) al chat' : '✗ ' + (j.msg || 'error');
+      it.lastChild.className = j.ok ? 'ok' : 'err';
+      estado(j.ok ? 'Listo. Revisa el chat. Puedes tomar otra foto o tocar ✅ Listo.' : (j.msg || 'No pude leer la foto') + ' Prueba con más luz y de frente.', j.ok ? 'ok' : 'err');
+    } catch (e) { estado('No pude procesar la foto: ' + (e.message || e), 'err'); }
   };
+  function cargarImagen(file) {
+    return new Promise((ok, no) => {
+      const url = URL.createObjectURL(file), im = new Image();
+      im.onload = () => ok(im); im.onerror = () => no(new Error('imagen no válida')); im.src = url;
+    });
+  }
+  function aJpeg(img, max) {
+    const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.85);
+  }
+  async function decodificarImagen(img) {
+    const W = img.naturalWidth, H = img.naturalHeight;
+    for (const max of [2000, 1300, 900]) {
+      const k = Math.min(1, max / Math.max(W, H));
+      for (const rot of [0, 90]) {
+        const c = document.createElement('canvas'), cx = c.getContext('2d', { willReadFrequently: true });
+        const w = Math.round(W * k), h = Math.round(H * k);
+        c.width = rot ? h : w; c.height = rot ? w : h;
+        for (const f of ['none', 'grayscale(1) contrast(1.7)']) {
+          cx.setTransform(1, 0, 0, 1, 0, 0); cx.filter = f;
+          if (rot) cx.setTransform(0, 1, -1, 0, h, 0);
+          cx.drawImage(img, 0, 0, w, h);
+          let t = null;
+          if (nativo) { try { const r = await nativo.detect(c); const b = r.find(x => iccidDe(x.rawValue)) || r[0]; if (b) t = b.rawValue; } catch (e) { } }
+          if (!t && zx) t = decodZx(c);
+          if (t && iccidDe(t)) return t;
+        }
+      }
+    }
+    return null;
+  }
   $('bTeclado').onclick = () => { $('manual').classList.toggle('on'); $('iManual').focus(); };
   $('bEnviar').onclick = () => { const v = iccidDe($('iManual').value); if (v) { enviar(v); $('iManual').value = ''; } else estado('Ese número no parece un ICCID (18-22 dígitos).', 'err'); };
   $('bListo').onclick = () => { detener(); if (tg) tg.close(); };
