@@ -10,9 +10,9 @@
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #111; color: #fff; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
-  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .marco { position: absolute; left: 5%; right: 5%; top: 34%; height: 20%; border: 3px solid rgba(255,255,255,.9); border-radius: 14px;
-           box-shadow: 0 0 0 9999px rgba(0,0,0,.45); transition: border-color .2s; }
+  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: brightness(1.15) contrast(1.1); }
+  .marco { position: absolute; left: 4%; right: 4%; top: 28%; height: 26%; border: 3px solid rgba(255,255,255,.9); border-radius: 14px;
+           box-shadow: 0 0 0 9999px rgba(0,0,0,.22); transition: border-color .2s; }
   .marco.ok { border-color: #3ddc84; }
   .marco::after { content: ''; position: absolute; left: 4%; right: 4%; top: 50%; height: 2px; background: #ff4d4d; box-shadow: 0 0 8px #ff4d4d; }
   .arriba { position: absolute; top: 0; left: 0; right: 0; padding: 14px 16px; background: linear-gradient(#000c, #0000); }
@@ -24,7 +24,7 @@
   .it { background: rgba(255,255,255,.12); border-radius: 10px; padding: 8px 10px; margin-top: 6px; display: flex; justify-content: space-between; gap: 8px; }
   .ok { color: #7ee2a0; } .err { color: #ff9b8a; }
   .fila { display: flex; gap: 8px; margin-top: 10px; }
-  button { flex: 1; border: 0; border-radius: 10px; padding: 11px 6px; font-size: 14px; font-weight: 600; background: #fff; color: #111; }
+  button { flex: 1; border: 0; border-radius: 10px; padding: 11px 4px; font-size: 13px; font-weight: 600; background: #fff; color: #111; }
   button.sec { background: rgba(255,255,255,.18); color: #fff; }
   #velo { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 30px; background: #111; font-size: 15px; line-height: 1.5; z-index: 9; }
   #manual { display: none; margin-top: 8px; gap: 8px; } #manual.on { display: flex; }
@@ -34,7 +34,7 @@
 <body>
 <video id="video" playsinline muted autoplay></video>
 <div class="marco" id="marco"></div>
-<div class="arriba"><b>📷 Escanear SIM</b><div>Pon el código de barras del ICCID dentro del recuadro, a unos 10–15 cm</div></div>
+<div class="arriba"><b>📷 Escanear SIM</b><div>Código del ICCID dentro del recuadro, a unos 15 cm. Toca la pantalla para enfocar. Si no lee, usa 🔍 o 📸.</div></div>
 <div class="abajo">
   <div id="estado">Iniciando cámara…</div>
   <div id="info"></div>
@@ -42,8 +42,12 @@
   <div id="manual"><input id="iManual" inputmode="numeric" placeholder="Escribe el ICCID"><button id="bEnviar" style="flex:0 0 90px">Consultar</button></div>
   <div class="fila">
     <button class="sec" id="bLuz">🔦 Luz</button>
-    <button class="sec" id="bCam">🔄 Cámara</button>
-    <button class="sec" id="bTeclado">⌨️ Escribir</button>
+    <button class="sec" id="bZoom">🔍 1x</button>
+    <button class="sec" id="bCam">🔄</button>
+    <button class="sec" id="bTeclado">⌨️</button>
+  </div>
+  <div class="fila">
+    <button class="sec" id="bFoto" style="flex:2">📸 Capturar nítida</button>
     <button id="bListo">✅ Listo</button>
   </div>
 </div>
@@ -60,6 +64,7 @@
   const $ = id => document.getElementById(id);
   const video = $('video');
   const vistos = {};
+  let capacidades = {}, zoomActual = 1;
   let stream = null, track = null, camaras = [], iCam = -1, ocupado = false, corriendo = false, luz = false;
   let nativo = null, zx = null, metodo = '';
   const lienzo = document.createElement('canvas');
@@ -75,7 +80,8 @@
 
   /* ---------- Envío al bot ---------- */
   async function enviar(iccid) {
-    if (vistos[iccid] || ocupado) return;
+    if (vistos[iccid]) { if (!ocupado) estado('Ese ICCID (…' + iccid.slice(-8) + ') ya lo consultaste. Escanea otra SIM o toca ✅ Listo.', 'ok'); return; }
+    if (ocupado) return;
     vistos[iccid] = 1; ocupado = true;
     vibra('success');
     $('marco').classList.add('ok'); setTimeout(() => $('marco').classList.remove('ok'), 900);
@@ -145,12 +151,17 @@
     track = stream.getVideoTracks()[0];
     try { // enfoque continuo y un poco de zoom si el teléfono lo permite
       const cap = track.getCapabilities ? track.getCapabilities() : {};
+      capacidades = cap;
       const adv = {};
       if (cap.focusMode && cap.focusMode.includes('continuous')) adv.focusMode = 'continuous';
-      if (cap.zoom) adv.zoom = Math.min(cap.zoom.max, Math.max(cap.zoom.min, 1.5));
+      if (cap.exposureMode && cap.exposureMode.includes('continuous')) adv.exposureMode = 'continuous';
+      if (cap.whiteBalanceMode && cap.whiteBalanceMode.includes('continuous')) adv.whiteBalanceMode = 'continuous';
+      if (cap.exposureCompensation) adv.exposureCompensation = Math.min(cap.exposureCompensation.max, 0.7);
       if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] });
       $('bLuz').style.display = cap.torch ? '' : 'none';
-    } catch (e) { $('bLuz').style.display = 'none'; }
+      $('bZoom').style.display = cap.zoom ? '' : 'none';
+      zoomActual = 1; $('bZoom').textContent = '🔍 1x';
+    } catch (e) { $('bLuz').style.display = 'none'; $('bZoom').style.display = 'none'; }
     if (!camaras.length) {
       try { camaras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); } catch (e) { }
     }
@@ -185,7 +196,9 @@
       const completo = intentos % 4 === 0;
       if (completo) { sx = 0; sy = 0; sw = vw; sh = vh; }
       lienzo.width = Math.round(sw); lienzo.height = Math.round(sh);
+      ctx.filter = intentos % 2 ? 'grayscale(1) contrast(1.6) brightness(1.1)' : 'none';
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, lienzo.width, lienzo.height);
+      ctx.filter = 'none';
       let texto = null;
       try {
         if (nativo) {
@@ -224,6 +237,51 @@
   $('bLuz').onclick = async () => {
     if (!track) return;
     try { luz = !luz; await track.applyConstraints({ advanced: [{ torch: luz }] }); } catch (e) { estado('Este teléfono no permite encender la luz desde aquí.', 'err'); }
+  };
+  $('bZoom').onclick = async () => {
+    if (!track || !capacidades.zoom) return;
+    const z = capacidades.zoom, pasos = [1, 2, 3].filter(v => v >= z.min && v <= z.max);
+    zoomActual = pasos[(pasos.indexOf(zoomActual) + 1) % pasos.length] || 1;
+    try { await track.applyConstraints({ advanced: [{ zoom: zoomActual }] }); $('bZoom').textContent = '🔍 ' + zoomActual + 'x'; } catch (e) { }
+  };
+  // Tocar la pantalla vuelve a enfocar
+  video.addEventListener('click', enfocar); $('marco').addEventListener('click', enfocar);
+  async function enfocar(ev) {
+    if (!track || !capacidades.focusMode) return;
+    try {
+      const adv = { focusMode: capacidades.focusMode.includes('single-shot') ? 'single-shot' : 'continuous' };
+      if (ev && capacidades.pointsOfInterest !== undefined) adv.pointsOfInterest = [{ x: ev.clientX / innerWidth, y: ev.clientY / innerHeight }];
+      await track.applyConstraints({ advanced: [adv] });
+      estado('Enfocando…');
+      setTimeout(() => { if (track && capacidades.focusMode.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => { }); }, 1200);
+    } catch (e) { }
+  }
+  // Foto a máxima resolución (más nítida que el video) y la decodifica
+  $('bFoto').onclick = async () => {
+    if (!track) return;
+    estado('Capturando foto…');
+    try {
+      let bmp;
+      if ('ImageCapture' in window) {
+        const ic = new ImageCapture(track);
+        const espera = (ms) => new Promise((_, no) => setTimeout(() => no(new Error('tiempo')), ms));
+        try { bmp = await createImageBitmap(await Promise.race([ic.takePhoto(), espera(4000)])); }
+        catch (e) { try { bmp = await Promise.race([ic.grabFrame(), espera(2000)]); } catch (e2) { bmp = video; } }
+      } else { bmp = video; }
+      const w = bmp.width || video.videoWidth, h = bmp.height || video.videoHeight;
+      const c = document.createElement('canvas'), k = Math.min(1, 2400 / Math.max(w, h));
+      c.width = Math.round(w * k); c.height = Math.round(h * k);
+      const cx = c.getContext('2d', { willReadFrequently: true });
+      let texto = null;
+      for (const f of ['none', 'grayscale(1) contrast(1.6)', 'grayscale(1) contrast(2.2) brightness(1.2)']) {
+        cx.filter = f; cx.drawImage(bmp, 0, 0, c.width, c.height);
+        if (nativo) { try { const r = await nativo.detect(c); const b = r.find(x => iccidDe(x.rawValue)) || r[0]; if (b) texto = b.rawValue; } catch (e) { } }
+        if (!texto && zx) texto = decodZx(c);
+        if (texto) break;
+      }
+      if (texto) leido(texto);
+      else estado('No encontré el código en la foto. Acércate un poco, evita reflejos y vuelve a intentar, o manda la foto en el chat.', 'err');
+    } catch (e) { estado('No pude tomar la foto: ' + (e.message || e), 'err'); }
   };
   $('bTeclado').onclick = () => { $('manual').classList.toggle('on'); $('iManual').focus(); };
   $('bEnviar').onclick = () => { const v = iccidDe($('iManual').value); if (v) { enviar(v); $('iManual').value = ''; } else estado('Ese número no parece un ICCID (18-22 dígitos).', 'err'); };
